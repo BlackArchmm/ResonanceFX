@@ -65,7 +65,9 @@ extern "C" __attribute__((visibility("default"))) binder_exception_t destroyEffe
             return EX_ILLEGAL_STATE;
         }
     } else {
-        instanceSp->command(CommandId::RESET);
+        if (state != State::INIT) {  // QTI-FIX2
+            instanceSp->command(CommandId::RESET);
+        }
         instanceSp->close();
     }
 
@@ -79,6 +81,9 @@ namespace aidl::android::hardware::audio::effect {
 ndk::ScopedAStatus EffectImpl::open(const Parameter::Common& common,
                                     const std::optional<Parameter::Specific>& specific,
                                     OpenEffectReturn* ret) {
+    // QTI-FIX2: show what the HAL asks for, so a format rejection is visible in logcat.
+    LOG(WARNING) << getEffectNameWithVersion() << " open: input=" << common.input.toString()
+                 << " output=" << common.output.toString();
     // effect only support 32bits float
     RETURN_IF(common.input.base.format.pcm != common.output.base.format.pcm ||
                       common.input.base.format.pcm != PcmType::FLOAT_32_BIT,
@@ -268,7 +273,14 @@ ndk::ScopedAStatus EffectImpl::getState(State* state) NO_THREAD_SAFETY_ANALYSIS 
 
 ndk::ScopedAStatus EffectImpl::command(CommandId command) {
     std::lock_guard lg(mImplMutex);
-    RETURN_IF(mState == State::INIT, EX_ILLEGAL_STATE, "instanceNotOpen");
+    // QTI-FIX2: the QTI effect factory issues a command right after createEffect, before
+    // open(). Rejecting it makes the factory fail the whole creation (-38 in AudioFlinger).
+    // Nothing runs before open(), so accept it as a no-op; open() and START come later.
+    if (mState == State::INIT) {
+        LOG(WARNING) << getEffectNameWithVersion() << __func__ << " " << toString(command)
+                     << " before open(): ignored";
+        return ndk::ScopedAStatus::ok();
+    }
 
     switch (command) {
         case CommandId::START:
