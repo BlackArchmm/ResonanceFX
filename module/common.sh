@@ -826,7 +826,13 @@ rfx_restart_audio() {
 # The definitive check: did the audio HAL's effect factory actually register our UUID?
 # (audio_flinger dumps every effect library and descriptor it knows.)
 rfx_engine_registered() {
-    dumpsys media.audio_flinger 2>/dev/null | grep -qi "$RFX_UUID"
+    dumpsys media.audio_flinger 2>/dev/null | grep -qi "$RFX_UUID" && return 0
+    # QTI-FIX5: AIDL HALs list only instantiated effects in dumpsys. The engine mapped in an
+    # effect process means the factory loaded it from the patched config.
+    for pid in $(rfx_effect_pids); do
+        grep -q 'libresonancefx' "/proc/$pid/maps" 2>/dev/null && return 0
+    done
+    return 1
 }
 
 rfx_set_description() {
