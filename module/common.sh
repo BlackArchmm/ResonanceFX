@@ -306,9 +306,16 @@ rfx_lib_partitions() {
 # an APEX-hosted AIDL effect HAL permits /system/lib64 but not /vendor/lib64, and the AOSP
 # factory searches /odm, /vendor and /system in that order, so a vendor copy would be found
 # first and then rejected by the linker namespace.
+# QTI-FIX: Qualcomm devices host the AIDL effect factory inside the vendor audio HAL
+# (/vendor/bin/hw/audiohalservice.qti), whose linker namespace only reaches /vendor and /odm.
+# There the AIDL build must live in /vendor/lib*/soundfx; APEX-hosted HALs keep /system.
+rfx_aidl_partition() {
+    if [ -f /vendor/bin/hw/audiohalservice.qti ]; then echo /vendor; else echo /system; fi
+}
+
 rfx_lib_partitions_for() {
     case "$1" in
-        libresonancefx_aidl*) echo /system ;;
+        libresonancefx_aidl*) rfx_aidl_partition ;;
         *) rfx_lib_partitions ;;
     esac
     true
@@ -557,13 +564,17 @@ rfx_stage_libraries() {
         for src in "$MODDIR/engine/$abi"/libresonancefx_aidl*.so; do
             [ -f "$src" ] || continue
             name="${src##*/}"
-            dir="$MODDIR/system/$libdir/soundfx"
+            part="$(rfx_aidl_partition)"
+            case "$part" in
+                /vendor) dir="$MODDIR/system/vendor/$libdir/soundfx" ;;
+                *) dir="$MODDIR/system/$libdir/soundfx" ;;
+            esac
             mkdir -p "$dir"
             chmod 0755 "$dir"
             cp -f "$src" "$dir/$name"
             chmod 0644 "$dir/$name"
-            chcon "$(rfx_lib_context "/system/")" "$dir/$name" 2>/dev/null
-            rfx_log "staged $abi -> /system/$libdir/soundfx/$name"
+            chcon "$(rfx_lib_context "$part/")" "$dir/$name" 2>/dev/null
+            rfx_log "staged $abi -> $part/$libdir/soundfx/$name"
         done
     done
 }
