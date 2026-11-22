@@ -93,6 +93,11 @@ ndk::ScopedAStatus EffectImpl::open(const Parameter::Common& common,
     RETURN_OK_IF(mState != State::INIT);
     mImplContext = createContext(common);
     RETURN_IF(!mImplContext, EX_NULL_POINTER, "nullContext");
+    if (!mImplContext->getStatusEventFlag()) {  // QTI-FIX4: no shared memory, stay in bypass
+        LOG(ERROR) << getEffectNameWithVersion() << " open: FMQ/EventFlag unavailable";
+        mImplContext.reset();
+        return ndk::ScopedAStatus::fromExceptionCodeWithMessage(EX_ILLEGAL_STATE, "fmqFailed");
+    }
 
     // This build targets the frozen android.hardware.audio.effect V3 contract (Android 16).
     // The NDK backend has no getInterfaceVersion(); the factory loads the library matching the
