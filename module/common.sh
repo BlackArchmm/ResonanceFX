@@ -785,7 +785,7 @@ rfx_active_lib_paths() {
     case "$name" in
         libresonancefx_aidl*)
             for d in $(rfx_aidl_apex_dirs); do echo "$d/$name"; done
-            echo "/system/$(rfx_primary_libdir)/soundfx/$name"
+            echo "$(rfx_aidl_partition)/$(rfx_primary_libdir)/soundfx/$name"  # QTI-FIX6
             ;;
         *)
             for libdir in $(rfx_lib_targets | awk '{ print $1 }'); do
@@ -807,7 +807,7 @@ rfx_lib_bind_targets() {
             for d in $(rfx_aidl_apex_dirs); do
                 case "$d" in */"$libdir"/soundfx) echo "$d" ;; esac
             done
-            echo "/system/$libdir/soundfx"
+            echo "$(rfx_aidl_partition)/$libdir/soundfx"  # QTI-FIX6
             ;;
         *)
             for part in $(rfx_lib_partitions_for "$active"); do
