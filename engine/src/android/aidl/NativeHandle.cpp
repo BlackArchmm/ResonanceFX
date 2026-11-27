@@ -13,6 +13,9 @@
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <unistd.h>
+#include <android/log.h>  // QTI-FIX4
+#include <cerrno>
+#include <dlfcn.h>
 
 extern "C" {
 
@@ -71,8 +74,42 @@ extern "C" int android_errorWriteLog(int, const char*) { return 0; }
 // ashmem_create_region/ashmem_set_prot_region are normally in libcutils, which is not part of
 // the NDK. FMQ allocates its ring buffer with them; use /dev/ashmem when present and memfd
 // otherwise (both are mmap-able by the framework through the native handle).
+// QTI-FIX4: the platform libcutils is already mapped in every audio HAL; its allocator is the
+// one SELinux and the kernel expect for FMQs (memfd with seals on recent releases).
+static void* rfxCutils() {
+    static void* handle = [] {
+        void* h = ::dlopen("libcutils.so", RTLD_NOW | RTLD_NOLOAD);
+        if (h == nullptr) h = ::dlopen("libcutils.so", RTLD_NOW);
+        return h;
+    }();
+    return handle;
+}
+
+static int rfxFallbackCreateRegion(const char* name, size_t size);
+
 extern "C" int ashmem_create_region(const char* name, size_t size) {
+    using CreateFn = int (*)(const char*, size_t);
+    if (void* h = rfxCutils()) {
+        auto fn = reinterpret_cast<CreateFn>(::dlsym(h, "ashmem_create_region"));
+        if (fn != nullptr && fn != &ashmem_create_region) {
+            int fd = fn(name, size);
+            if (fd >= 0) return fd;
+            __android_log_print(ANDROID_LOG_ERROR, "ResonanceFX.Aidl",
+                                "libcutils ashmem_create_region failed: errno %d", errno);
+        }
+    } else {
+        __android_log_print(ANDROID_LOG_ERROR, "ResonanceFX.Aidl", "libcutils not loaded: %s",
+                            ::dlerror());
+    }
+    return rfxFallbackCreateRegion(name, size);
+}
+
+static int rfxFallbackCreateRegion(const char* name, size_t size) {
     int fd = ::open("/dev/ashmem", O_RDWR | O_CLOEXEC);
+    if (fd < 0) {
+        __android_log_print(ANDROID_LOG_ERROR, "ResonanceFX.Aidl", "/dev/ashmem: errno %d",
+                            errno);
+    }
     if (fd >= 0) {
         char label[ASHMEM_NAME_LEN] = {};
         if (name != nullptr) std::strncpy(label, name, sizeof(label) - 1);
@@ -83,7 +120,11 @@ extern "C" int ashmem_create_region(const char* name, size_t size) {
         ::close(fd);
     }
     fd = static_cast<int>(::syscall(__NR_memfd_create, "resonancefx-fmq", MFD_CLOEXEC));
-    if (fd < 0) return -1;
+    if (fd < 0) {
+        __android_log_print(ANDROID_LOG_ERROR, "ResonanceFX.Aidl", "memfd_create: errno %d",
+                            errno);
+        return -1;
+    }
     if (::ftruncate(fd, static_cast<off_t>(size)) != 0) {
         ::close(fd);
         return -1;
@@ -92,6 +133,11 @@ extern "C" int ashmem_create_region(const char* name, size_t size) {
 }
 
 extern "C" int ashmem_set_prot_region(int fd, int prot) {
+    using ProtFn = int (*)(int, int);  // QTI-FIX4: platform implementation first
+    if (void* h = rfxCutils()) {
+        auto fn = reinterpret_cast<ProtFn>(::dlsym(h, "ashmem_set_prot_region"));
+        if (fn != nullptr && fn != &ashmem_set_prot_region && fd >= 0) return fn(fd, prot);
+    }
     // memfd regions are normal files; there is no separate protection mask to set.
     if (fd < 0) return -1;
     (void)::ioctl(fd, ASHMEM_SET_PROT_MASK, prot);

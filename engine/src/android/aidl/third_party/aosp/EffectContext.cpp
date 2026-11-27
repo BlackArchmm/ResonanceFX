@@ -45,9 +45,15 @@ EffectContext::EffectContext(size_t statusDepth, const Parameter::Common& common
                    << " inputMQ: " << mInputMQ->isValid() << " outputMQ: " << mOutputMQ->isValid();
     }
 
-    ::android::status_t status =
-            EventFlag::createEventFlag(mStatusMQ->getEventFlagWord(), &mEfGroup);
-    LOG_ALWAYS_FATAL_IF(status != ::android::OK || !mEfGroup, " create EventFlagGroup failed ");
+    // QTI-FIX4: never abort the audio HAL; open() refuses a context without an event flag.
+    if (mStatusMQ->isValid()) {
+        ::android::status_t status =
+                EventFlag::createEventFlag(mStatusMQ->getEventFlagWord(), &mEfGroup);
+        if (status != ::android::OK || !mEfGroup) {
+            LOG(ERROR) << __func__ << " create EventFlagGroup failed, status " << status;
+            mEfGroup = nullptr;
+        }
+    }
     mWorkBuffer.resize(std::max(inBufferSizeInFloat, outBufferSizeInFloat));
 }
 
